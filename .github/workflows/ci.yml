@@ -1,0 +1,54 @@
+name: Deploy Krita Wasm to GitHub Pages
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: pages-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build:
+    runs-on: ubuntu-26.04
+    steps:
+      - name: Prepare Nightly Pages loader
+        env:
+          RELEASES_URL: https://github.com/krita-port/krita-wasm/releases
+        run: |
+          mkdir -p build/site
+          curl --fail --location --silent --show-error --retry 3 \
+            "$RELEASES_URL/download/latest/krita.pages.tar.gz" \
+            --output build/krita.pages.tar.gz
+          python3 -m tarfile --filter data --extract build/krita.pages.tar.gz build/site
+          test -s build/site/index.html
+          test -s build/site/isolation-sw.js
+          test -s build/site/COPYING
+          test ! -e build/site/krita.bundle.tar.gz
+          jq -e --arg download "$RELEASES_URL/download/latest/krita.bundle.tar.gz" \
+            'select(.mode == "manual" and .filename == "krita.bundle.tar.gz") | .release_url = $download' \
+            build/site/bundle.json > build/bundle.json
+          mv build/bundle.json build/site/bundle.json
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: build/site
+
+  deploy:
+    needs: build
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-26.04
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
